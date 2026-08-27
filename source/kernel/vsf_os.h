@@ -135,21 +135,50 @@ extern "C" {
  */
 #   define VSF_SCHED_SAFE_CODE_REGION       DEFAULT_CODE_REGION_NONE
 
-/**
- * \~english
- * @brief No-op stub variant when VSF_OS_CFG_PRIORITY_NUM <= 1; shares the documentation of the first variant above.
- * \~chinese
- * @brief VSF_OS_CFG_PRIORITY_NUM <= 1 时的空操作桩变体；与上方第一个变体共用文档。
- */
-#   define vsf_sched_lock()                 0
+// NOTE: with a single event queue and kernel preemption enabled, hard IRQs
+//  post events to edas while kernel code RMWs the shared eda state byte
+//  (is_ready shares one byte with is_timed etc., see __vsf_eda_state_t).
+//  A no-op sched lock loses concurrent flag updates: on YC1615 a USB hard
+//  IRQ preempting the is_timed RMW in __vsf_kernel_evthandler wiped is_ready
+//  of an eda still linked in rdy_list; the next post double-enqueued it and
+//  vsf_evtq_poll spun forever on the resulting list cycle (full system
+//  freeze, proven by ICE dump). So under VSF_KERNEL_CFG_ALLOW_KERNEL_BEING_
+//  PREEMPTED the lock/unlock stubs below mask interrupts instead.
 
 /**
  * \~english
- * @brief No-op stub variant when VSF_OS_CFG_PRIORITY_NUM <= 1; shares the documentation of the first variant above.
+ * @brief Variant when VSF_OS_CFG_PRIORITY_NUM <= 1: masks interrupts if
+ *        VSF_KERNEL_CFG_ALLOW_KERNEL_BEING_PREEMPTED is ENABLED (see the note
+ *        above), otherwise a no-op stub; shares the documentation of the
+ *        first variant above.
  * \~chinese
- * @brief VSF_OS_CFG_PRIORITY_NUM <= 1 时的空操作桩变体；与上方第一个变体共用文档。
+ * @brief VSF_OS_CFG_PRIORITY_NUM <= 1 时的变体：开启
+ *        VSF_KERNEL_CFG_ALLOW_KERNEL_BEING_PREEMPTED 时关中断（见上方注释），
+ *        否则为空操作桩；与上方第一个变体共用文档。
  */
-#   define vsf_sched_unlock(__level)        VSF_UNUSED_PARAM(__level)
+#   if VSF_KERNEL_CFG_ALLOW_KERNEL_BEING_PREEMPTED == ENABLED
+#       define vsf_sched_lock()                 ((vsf_sched_lock_status_t)vsf_protect_int())
+#   else
+#       define vsf_sched_lock()                 0
+#   endif
+
+/**
+ * \~english
+ * @brief Variant when VSF_OS_CFG_PRIORITY_NUM <= 1: restores the interrupt
+ *        state saved by vsf_sched_lock() if
+ *        VSF_KERNEL_CFG_ALLOW_KERNEL_BEING_PREEMPTED is ENABLED, otherwise a
+ *        no-op stub; shares the documentation of the first variant above.
+ * \~chinese
+ * @brief VSF_OS_CFG_PRIORITY_NUM <= 1 时的变体：开启
+ *        VSF_KERNEL_CFG_ALLOW_KERNEL_BEING_PREEMPTED 时恢复
+ *        vsf_sched_lock() 保存的中断状态，否则为空操作桩；
+ *        与上方第一个变体共用文档。
+ */
+#   if VSF_KERNEL_CFG_ALLOW_KERNEL_BEING_PREEMPTED == ENABLED
+#       define vsf_sched_unlock(__level)        vsf_unprotect_int((vsf_protect_t)(__level))
+#   else
+#       define vsf_sched_unlock(__level)        VSF_UNUSED_PARAM(__level)
+#   endif
 
 /**
  * \~english
